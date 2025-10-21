@@ -245,10 +245,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  align-items: stretch;
-  width: 100%;
-  max-width: 220px;
-  margin-left: auto;
+  align-items: flex-end;
+  width: 220px;
 }
 
 .preset-label {
@@ -284,8 +282,8 @@ body {
     align-items: flex-start;
   }
   .card-header .preset-select {
-    max-width: none;
-    margin-left: 0;
+    width: 100%;
+    align-items: flex-start;
   }
 }
 
