@@ -241,6 +241,24 @@ body {
   border: 0;
 }
 
+.preset-select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: stretch;
+  width: 100%;
+  max-width: 220px;
+  margin-left: auto;
+}
+
+.preset-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #94a3b8;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .text-xs {
   font-size: 0.75rem;
 }
@@ -266,12 +284,9 @@ body {
     align-items: flex-start;
   }
   .card-header .preset-select {
-    width: 100%;
+    max-width: none;
+    margin-left: 0;
   }
-}
-
-.preset-select {
-  width: 220px;
 }
 
 .text-xs + .text-xs {
