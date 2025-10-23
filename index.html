@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fabric Sizer</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
+    <div class="max-w-5xl mx-auto py-10 px-4 space-y-8">
+      <header class="space-y-2 text-center">
+        <h1 class="text-3xl font-semibold">Fabric Sizer</h1>
+        <p class="text-slate-300">
+          Quick switch counts for Clos, Dragonfly+, and multi-plane fabrics.
+        </p>
+      </header>
+      <div class="grid gap-6 layout-grid">
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Inputs</h2>
+              <p class="card-description">Pick the fabric shape and core parameters.</p>
+            </div>
+          </div>
+          <div class="card-content space-y-6">
+            <div class="field-group">
+              <label class="field-label" for="totalHosts">Total hosts</label>
+              <select id="totalHosts" class="input"></select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="hostsPerPod">Hosts per pod</label>
+              <select id="hostsPerPod" class="input"></select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="switchRadix">Switch radix</label>
+              <select id="switchRadix" class="input"></select>
+            </div>
+            <div class="field-group">
+              <span class="field-label">Topology</span>
+              <div class="radio-group">
+                <label class="radio-option">
+                  <input type="radio" name="topology" value="clos3" />
+                  <span>3-stage Clos</span>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="topology" value="clos5" />
+                  <span>5-stage Clos</span>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="topology" value="dragonflyPlus" />
+                  <span>Dragonfly+</span>
+                </label>
+                <label class="radio-option">
+                  <input type="radio" name="topology" value="multiPlane" />
+                  <span>Multi-plane</span>
+                </label>
+              </div>
+            </div>
+            <p id="validationMessage" class="text-xs text-red-400 hidden"></p>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Results</h2>
+              <p class="card-description">Switch totals update automatically.</p>
+            </div>
+            <button id="copyButton" class="btn" type="button">Copy JSON result</button>
+          </div>
+          <div class="card-content space-y-6" id="resultsRoot">
+            <div class="result-grid">
+              <div>
+                <span class="result-label">Leaf switches</span>
+                <p class="result-value" id="leavesCount">-</p>
+              </div>
+              <div>
+                <span class="result-label">Spine switches</span>
+                <p class="result-value" id="spinesCount">-</p>
+              </div>
+              <div data-role="resultSuper">
+                <span class="result-label">Super-spines</span>
+                <p class="result-value" id="superSpinesCount">-</p>
+              </div>
+              <div>
+                <span class="result-label">Total switches</span>
+                <p class="result-value" id="totalSwitches">-</p>
+              </div>
+            </div>
+            <details class="collapsible">
+              <summary>Breakdown</summary>
+              <div class="collapsible-body" id="podDetails"></div>
+            </details>
+            <details class="collapsible">
+              <summary>Assumptions</summary>
+              <ul class="collapsible-body" id="assumptionsList"></ul>
+            </details>
+          </div>
+        </section>
+      </div>
+    </div>
+    <script type="module" src="./app/main.js"></script>
+  </body>
+</html>
