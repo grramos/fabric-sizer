@@ -1,6 +1,13 @@
 # Fabric Sizer
 
-Fabric Sizer is a lightweight web application that computes switch counts and fiber counts for three common data-center topologies: 3-stage Clos, 5-stage Clos, and a simplified Dragonfly+. The UI runs entirely in the browser and the sizing math lives in pure TypeScript modules so it can be reused outside of the app.
+Fabric Sizer is a lightweight web application that computes switch counts for common data-center topologies. The UI runs entirely in the browser and the sizing math lives in pure TypeScript modules so it can be reused outside of the app.
+
+Supported topologies:
+
+- 3-stage Clos
+- 5-stage Clos
+- Dragonfly+
+- Multi-plane (dual-plane Clos)
 
 ## Getting started
 
@@ -29,7 +36,7 @@ The topology calculators are covered by focused unit tests. Run them with:
 pnpm test
 ```
 
-The tests exercise representative fixtures for 3-stage Clos, 5-stage Clos, and Dragonfly+ sizing including oversubscription and error handling cases.
+The tests exercise representative fixtures for each supported topology.
 
 ## Project structure
 
@@ -48,6 +55,7 @@ src/
     clos3.ts            # 3-stage Clos calculator (exports calculate)
     clos5.ts            # 5-stage Clos calculator (exports calculate)
     dragonflyPlus.ts    # Dragonfly+ calculator (exports calculate)
+    multiPlane.ts       # Multi-plane calculator built on top of 3-stage Clos
 scripts/
   dev-server.js         # Simple Node static file server used by pnpm dev
   build.js              # Copies public/ into dist/
@@ -67,22 +75,12 @@ interface SizingResult {
     superSpines?: number;
     total: number;
   };
-  fiberCounts: {
-    hostToLeafPerPod: number;
-    hostToLeafTotal: number;
-    leafToSpinePerPod: number;
-    leafToSpineTotal: number;
-    spineToSuperPerPod?: number;
-    spineToSuperTotal?: number;
-    interGroupPerGroup?: number;
-    interGroupTotal?: number;
-  };
   assumptions: Array<{ label: string; description: string }>;
   metadata: Record<string, number | string>;
 }
 ```
 
-The `assumptions` array captures every `ceil()` or `floor()` operation that impacts the totals so that the UI can render a human-readable audit trail. The `metadata` bag holds secondary values (pods, leaves per pod, group counts, etc.) that populate the “Per-pod breakdown” card.
+The `assumptions` array captures every `ceil()` or `floor()` operation that impacts the totals so that the UI can render a human-readable audit trail. The `metadata` bag holds secondary values (pods, leaves per pod, group counts, etc.) that populate the “Breakdown” panel in the UI.
 
 ## Deployment
 

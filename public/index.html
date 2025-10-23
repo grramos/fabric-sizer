@@ -7,11 +7,11 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body class="bg-slate-950 text-slate-100 min-h-screen">
-    <div class="max-w-6xl mx-auto py-10 px-4 space-y-8">
+    <div class="max-w-5xl mx-auto py-10 px-4 space-y-8">
       <header class="space-y-2 text-center">
         <h1 class="text-3xl font-semibold">Fabric Sizer</h1>
         <p class="text-slate-300">
-          Interactive sizing for 3-stage Clos, 5-stage Clos, and Dragonfly+ fabrics.
+          Quick switch counts for Clos, Dragonfly+, and multi-plane fabrics.
         </p>
       </header>
       <div class="grid gap-6 layout-grid">
@@ -19,26 +19,21 @@
           <div class="card-header">
             <div>
               <h2 class="card-title">Inputs</h2>
-              <p class="card-description">Adjust values to size your fabric instantly.</p>
-            </div>
-            <div class="preset-select">
-              <label for="presetSelect" class="preset-label">Input template</label>
-              <select id="presetSelect" class="input">
-                <option value="custom">Custom</option>
-                <option value="leaf32-400">32×400G Leaf (24 host / 8 fabric)</option>
-                <option value="leaf64-400">64×400G Leaf (48 host / 16 fabric)</option>
-                <option value="leaf32-800">32×800G Leaf (24 host / 8 fabric)</option>
-              </select>
+              <p class="card-description">Pick the fabric shape and core parameters.</p>
             </div>
           </div>
           <div class="card-content space-y-6">
             <div class="field-group">
               <label class="field-label" for="totalHosts">Total hosts</label>
-              <input id="totalHosts" class="input" type="number" min="1" step="1" />
+              <select id="totalHosts" class="input"></select>
             </div>
             <div class="field-group">
               <label class="field-label" for="hostsPerPod">Hosts per pod</label>
-              <input id="hostsPerPod" class="input" type="number" min="1" step="1" />
+              <select id="hostsPerPod" class="input"></select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="switchRadix">Switch radix</label>
+              <select id="switchRadix" class="input"></select>
             </div>
             <div class="field-group">
               <span class="field-label">Topology</span>
@@ -55,92 +50,11 @@
                   <input type="radio" name="topology" value="dragonflyPlus" />
                   <span>Dragonfly+</span>
                 </label>
-              </div>
-            </div>
-            <div class="field-group">
-              <label class="field-label" for="nicsPerHost">NICs per host</label>
-              <select id="nicsPerHost" class="input">
-                <option value="1">1</option>
-                <option value="2">2</option>
-              </select>
-            </div>
-            <div class="divider"></div>
-            <div class="space-y-4">
-              <h3 class="section-title">Leaf switch</h3>
-              <div class="field-grid">
-                <label class="field-group">
-                  <span class="field-label">Total ports</span>
-                  <input id="leafTotalPorts" class="input" type="number" min="1" step="1" />
-                </label>
-                <label class="field-group">
-                  <span class="field-label">Host-facing ports</span>
-                  <input id="leafHostPorts" class="input" type="number" min="1" step="1" />
-                </label>
-                <label class="field-group">
-                  <span class="field-label">Fabric-facing ports</span>
-                  <input id="leafFabricPorts" class="input" type="number" min="1" step="1" />
+                <label class="radio-option">
+                  <input type="radio" name="topology" value="multiPlane" />
+                  <span>Multi-plane</span>
                 </label>
               </div>
-            </div>
-            <div class="space-y-4">
-              <h3 class="section-title">Spine switch</h3>
-              <div class="field-grid">
-                <label class="field-group">
-                  <span class="field-label">Total ports</span>
-                  <input id="spineTotalPorts" class="input" type="number" min="1" step="1" />
-                </label>
-                <label class="field-group">
-                  <span class="field-label">Downlinks per spine</span>
-                  <input id="spineDownlinks" class="input" type="number" min="1" step="1" />
-                </label>
-                <label class="field-group" data-role="spineUplinks">
-                  <span class="field-label">Uplinks per spine</span>
-                  <input id="spineUplinks" class="input" type="number" min="0" step="1" />
-                </label>
-              </div>
-            </div>
-            <div class="space-y-4" data-role="superSpine">
-              <h3 class="section-title">Super-spine</h3>
-              <div class="field-grid">
-                <label class="field-group">
-                  <span class="field-label">Total ports</span>
-                  <input id="superSpineTotal" class="input" type="number" min="0" step="1" />
-                </label>
-                <label class="field-group">
-                  <span class="field-label">Downlinks per super-spine</span>
-                  <input id="superSpineDown" class="input" type="number" min="0" step="1" />
-                </label>
-              </div>
-            </div>
-            <div class="space-y-4" data-role="dragonfly">
-              <h3 class="section-title">Dragonfly+ parameters</h3>
-              <div class="field-grid">
-                <label class="field-group">
-                  <span class="field-label">Leaves per group</span>
-                  <input id="dfLeavesPerGroup" class="input" type="number" min="1" step="1" />
-                </label>
-                <label class="field-group">
-                  <span class="field-label">Spines per group</span>
-                  <input id="dfSpinesPerGroup" class="input" type="number" min="1" step="1" />
-                </label>
-                <label class="field-group">
-                  <span class="field-label">Intra-group degree</span>
-                  <input id="dfIntraDegree" class="input" type="number" min="0" step="1" />
-                </label>
-                <label class="field-group">
-                  <span class="field-label">Inter-group degree</span>
-                  <input id="dfInterDegree" class="input" type="number" min="0" step="1" />
-                </label>
-              </div>
-            </div>
-            <div class="field-group">
-              <label class="field-label" for="oversubscription">Oversubscription target</label>
-              <select id="oversubscription" class="input">
-                <option value="none">None</option>
-                <option value="1:1">1:1</option>
-                <option value="2:1">2:1</option>
-                <option value="3:1">3:1</option>
-              </select>
             </div>
             <p id="validationMessage" class="text-xs text-red-400 hidden"></p>
           </div>
@@ -149,7 +63,7 @@
           <div class="card-header">
             <div>
               <h2 class="card-title">Results</h2>
-              <p class="card-description">Updated automatically as inputs change.</p>
+              <p class="card-description">Switch totals update automatically.</p>
             </div>
             <button id="copyButton" class="btn" type="button">Copy JSON result</button>
           </div>
@@ -172,46 +86,12 @@
                 <p class="result-value" id="totalSwitches">-</p>
               </div>
             </div>
-            <div class="result-grid">
-              <div>
-                <span class="result-label">Host → Leaf (per pod)</span>
-                <p class="result-value" id="hostLeafPerPod">-</p>
-              </div>
-              <div>
-                <span class="result-label">Host → Leaf (total)</span>
-                <p class="result-value" id="hostLeafTotal">-</p>
-              </div>
-              <div>
-                <span class="result-label">Leaf → Spine (per pod)</span>
-                <p class="result-value" id="leafSpinePerPod">-</p>
-              </div>
-              <div>
-                <span class="result-label">Leaf → Spine (total)</span>
-                <p class="result-value" id="leafSpineTotal">-</p>
-              </div>
-              <div data-role="fiberSuper">
-                <span class="result-label">Spine → Super (per pod)</span>
-                <p class="result-value" id="spineSuperPerPod">-</p>
-              </div>
-              <div data-role="fiberSuper">
-                <span class="result-label">Spine → Super (total)</span>
-                <p class="result-value" id="spineSuperTotal">-</p>
-              </div>
-              <div data-role="fiberInter">
-                <span class="result-label">Inter-group (per group)</span>
-                <p class="result-value" id="interGroupPer">-</p>
-              </div>
-              <div data-role="fiberInter">
-                <span class="result-label">Inter-group (total)</span>
-                <p class="result-value" id="interGroupTotal">-</p>
-              </div>
-            </div>
             <details class="collapsible">
-              <summary>Per-pod breakdown</summary>
+              <summary>Breakdown</summary>
               <div class="collapsible-body" id="podDetails"></div>
             </details>
             <details class="collapsible">
-              <summary>Assumptions &amp; Rounding</summary>
+              <summary>Assumptions</summary>
               <ul class="collapsible-body" id="assumptionsList"></ul>
             </details>
           </div>

@@ -3,6 +3,7 @@ import {
   calculateClos3,
   calculateClos5,
   calculateDragonflyPlus,
+  calculateMultiPlane,
 } from '../public/app/calculators.js';
 
 const tests = [];
@@ -11,99 +12,63 @@ function test(name, fn) {
   tests.push({ name, fn });
 }
 
-test('3-stage Clos leaf and spine counts', () => {
+test('3-stage Clos counts derived from radix', () => {
   const result = calculateClos3({
     topology: 'clos3',
     totalHosts: 1024,
     hostsPerPod: 256,
-    nicsPerHost: 1,
-    leaf: { totalPorts: 32, hostPorts: 24, fabricPorts: 8 },
-    spine: { totalPorts: 32, downlinkPorts: 32 },
+    switchRadix: 32,
   });
-  assert.equal(result.switchCounts.leaves, 44);
-  assert.equal(result.switchCounts.spines, 11);
-  assert.equal(result.fiberCounts.leafToSpineTotal, 352);
+  assert.equal(result.switchCounts.leaves, 64);
+  assert.equal(result.switchCounts.spines, 32);
+  assert.equal(result.switchCounts.total, 96);
 });
 
-test('3-stage Clos fiber totals scale with NIC count', () => {
-  const result = calculateClos3({
-    topology: 'clos3',
-    totalHosts: 512,
-    hostsPerPod: 128,
-    nicsPerHost: 2,
-    leaf: { totalPorts: 48, hostPorts: 32, fabricPorts: 16 },
-    spine: { totalPorts: 64, downlinkPorts: 64 },
-  });
-  assert.equal(result.fiberCounts.hostToLeafTotal, 1024);
-  assert.equal(result.fiberCounts.leafToSpineTotal, 512);
-});
-
-test('5-stage Clos super-spine counts', () => {
+test('5-stage Clos introduces super-spines', () => {
   const result = calculateClos5({
     topology: 'clos5',
     totalHosts: 1024,
     hostsPerPod: 256,
-    nicsPerHost: 1,
-    leaf: { totalPorts: 32, hostPorts: 24, fabricPorts: 8 },
-    spine: { totalPorts: 32, downlinkPorts: 24, uplinkPorts: 8 },
-    superSpine: { totalPorts: 64, downlinkPorts: 64 },
+    switchRadix: 32,
   });
-  assert.equal(result.switchCounts.spines, 16);
-  assert.equal(result.switchCounts.superSpines, 2);
-  assert.equal(result.fiberCounts.spineToSuperTotal, 128);
+  assert.equal(result.switchCounts.leaves, 64);
+  assert.equal(result.switchCounts.spines, 64);
+  assert.equal(result.switchCounts.superSpines, 32);
+  assert.equal(result.switchCounts.total, 160);
 });
 
-test('5-stage Clos oversubscription adjusts fabric ports', () => {
-  const result = calculateClos5({
-    topology: 'clos5',
-    totalHosts: 256,
-    hostsPerPod: 128,
-    nicsPerHost: 1,
-    leaf: { totalPorts: 40, hostPorts: 24, fabricPorts: 8 },
-    spine: { totalPorts: 32, downlinkPorts: 16, uplinkPorts: 8 },
-    superSpine: { totalPorts: 48, downlinkPorts: 48 },
-    oversubscription: '2:1',
-  });
-  assert.equal(result.fiberCounts.leafToSpinePerPod, 72);
-  assert.equal(result.switchCounts.spines, 10);
-});
-
-test('Dragonfly+ group counts and inter-group links', () => {
+test('Dragonfly+ mirrors group sizing assumptions', () => {
   const result = calculateDragonflyPlus({
     topology: 'dragonflyPlus',
-    totalHosts: 384,
-    hostsPerPod: 192,
-    nicsPerHost: 1,
-    leaf: { totalPorts: 32, hostPorts: 24, fabricPorts: 8 },
-    spine: { totalPorts: 48, downlinkPorts: 32 },
-    dragonflyPlus: {
-      leavesPerGroup: 4,
-      spinesPerGroup: 3,
-      intraGroupDegree: 4,
-      interGroupDegree: 2,
-    },
+    totalHosts: 1024,
+    hostsPerPod: 256,
+    switchRadix: 32,
   });
-  assert.equal(result.metadata.groups, 4);
-  assert.equal(result.fiberCounts.interGroupTotal, 12);
+  assert.equal(result.switchCounts.leaves, 64);
+  assert.equal(result.switchCounts.spines, 64);
 });
 
-test('Dragonfly+ rejects impossible intra-group degree', () => {
-  assert.throws(() =>
-    calculateDragonflyPlus({
-      topology: 'dragonflyPlus',
-      totalHosts: 64,
-      hostsPerPod: 64,
-      nicsPerHost: 1,
-      leaf: { totalPorts: 24, hostPorts: 16, fabricPorts: 4 },
-      spine: { totalPorts: 32, downlinkPorts: 16 },
-      dragonflyPlus: {
-        leavesPerGroup: 2,
-        spinesPerGroup: 2,
-        intraGroupDegree: 6,
-        interGroupDegree: 2,
-      },
-    }),
-  );
+test('Multi-plane duplicates Clos fabrics across planes', () => {
+  const result = calculateMultiPlane({
+    topology: 'multiPlane',
+    totalHosts: 1024,
+    hostsPerPod: 256,
+    switchRadix: 32,
+  });
+  assert.equal(result.switchCounts.leaves, 128);
+  assert.equal(result.switchCounts.spines, 64);
+  assert.equal(result.switchCounts.total, 192);
+});
+
+test('Hosts per pod of zero falls back to single pod', () => {
+  const result = calculateClos3({
+    topology: 'clos3',
+    totalHosts: 64,
+    hostsPerPod: 0,
+    switchRadix: 32,
+  });
+  assert.equal(result.metadata.pods, 1);
+  assert.equal(result.switchCounts.leaves, 4);
 });
 
 async function run() {
