@@ -1,109 +1,96 @@
-function resolveFabricPorts(leaf, oversubscription) {
-  if (!oversubscription || oversubscription === '1:1') {
-    return { fabricPorts: leaf.fabricPorts };
+const DEFAULT_PLANE_COUNT = 2;
+
+function ensureEvenRadix(radix) {
+  if (radix <= 0 || radix % 2 !== 0) {
+    throw new Error('Switch radix must be a positive even number.');
   }
-  const ratio = Number(oversubscription.split(':')[0]);
-  const derived = Math.ceil(leaf.hostPorts / ratio);
-  return {
-    fabricPorts: derived,
-    assumption: {
-      label: 'Oversubscription applied',
-      description: `Fabric-facing ports derived from host ports (${leaf.hostPorts}) at ${oversubscription}, ceil(${leaf.hostPorts} / ${ratio}) = ${derived}.`,
-    },
-  };
 }
 
-function validateLeafConfig(leaf) {
-  if (leaf.hostPorts + leaf.fabricPorts > leaf.totalPorts) {
-    throw new Error('Leaf host and fabric ports exceed total ports.');
+function hostsPerLeaf(radix) {
+  return radix / 2;
+}
+
+function fabricPortsPerLeaf(radix) {
+  return radix / 2;
+}
+
+function normalizeHostsPerPod(totalHosts, hostsPerPod) {
+  if (hostsPerPod <= 0) {
+    return totalHosts;
   }
+  return hostsPerPod;
 }
 
 function derivePodCount(totalHosts, hostsPerPod) {
-  return Math.max(1, Math.ceil(totalHosts / hostsPerPod));
-}
-
-function hostCapacityPerLeaf(leaf, nicsPerHost) {
-  return Math.floor(leaf.hostPorts / nicsPerHost);
+  const perPod = normalizeHostsPerPod(totalHosts, hostsPerPod);
+  return Math.max(1, Math.ceil(totalHosts / perPod));
 }
 
 function makeResultSkeleton() {
   return {
     switchCounts: { leaves: 0, spines: 0, total: 0 },
-    fiberCounts: {
-      hostToLeafPerPod: 0,
-      hostToLeafTotal: 0,
-      leafToSpinePerPod: 0,
-      leafToSpineTotal: 0,
-    },
     assumptions: [],
     metadata: {},
   };
 }
 
-function buildBaseMetadata(inputs) {
+function pushAssumption(assumptions, label, description) {
+  assumptions.push({ label, description });
+}
+
+function baseMetadata(inputs) {
   return {
     totalHosts: inputs.totalHosts,
-    hostsPerPod: inputs.hostsPerPod,
-    nicsPerHost: inputs.nicsPerHost,
+    hostsPerPod: normalizeHostsPerPod(inputs.totalHosts, inputs.hostsPerPod),
+    switchRadix: inputs.switchRadix,
   };
 }
 
 export function calculateClos3(inputs) {
-  validateLeafConfig(inputs.leaf);
+  ensureEvenRadix(inputs.switchRadix);
+
   const result = makeResultSkeleton();
-  const metadata = buildBaseMetadata(inputs);
   const assumptions = result.assumptions;
+  const metadata = baseMetadata(inputs);
 
-  const podCount = derivePodCount(inputs.totalHosts, inputs.hostsPerPod);
+  const hostsPerLeafValue = hostsPerLeaf(inputs.switchRadix);
+  metadata.hostsPerLeaf = hostsPerLeafValue;
+  pushAssumption(
+    assumptions,
+    'Hosts per leaf',
+    `${inputs.switchRadix} total ports, half allocated to hosts = ${hostsPerLeafValue} hosts per leaf.`,
+  );
+
+  const normalizedHostsPerPod = metadata.hostsPerPod;
+  const podCount = derivePodCount(inputs.totalHosts, normalizedHostsPerPod);
   metadata.pods = podCount;
-  assumptions.push({
-    label: 'Pods required',
-    description: `ceil(${inputs.totalHosts} / ${inputs.hostsPerPod}) = ${podCount} pods.`,
-  });
+  pushAssumption(
+    assumptions,
+    'Pods required',
+    `ceil(${inputs.totalHosts} / ${normalizedHostsPerPod}) = ${podCount} pods.`,
+  );
 
-  const perLeafHostCapacity = hostCapacityPerLeaf(inputs.leaf, inputs.nicsPerHost);
-  if (perLeafHostCapacity <= 0) {
-    throw new Error('Leaf host port allocation does not allow any hosts per leaf.');
-  }
-  metadata.hostsPerLeaf = perLeafHostCapacity;
-  assumptions.push({
-    label: 'Hosts per leaf',
-    description: `floor(${inputs.leaf.hostPorts} / ${inputs.nicsPerHost}) = ${perLeafHostCapacity} hosts per leaf.`,
-  });
-
-  const leavesPerPod = Math.ceil(inputs.hostsPerPod / perLeafHostCapacity);
+  const leavesPerPod = Math.max(1, Math.ceil(normalizedHostsPerPod / hostsPerLeafValue));
   metadata.leavesPerPod = leavesPerPod;
-  assumptions.push({
-    label: 'Leaves per pod',
-    description: `ceil(${inputs.hostsPerPod} / ${perLeafHostCapacity}) = ${leavesPerPod} leaves per pod.`,
-  });
+  pushAssumption(
+    assumptions,
+    'Leaves per pod',
+    `ceil(${normalizedHostsPerPod} / ${hostsPerLeafValue}) = ${leavesPerPod} leaves per pod.`,
+  );
 
   const totalLeaves = leavesPerPod * podCount;
+  metadata.totalLeaves = totalLeaves;
 
-  const oversubResolved = resolveFabricPorts(inputs.leaf, inputs.oversubscription);
-  if (oversubResolved.assumption) {
-    assumptions.push(oversubResolved.assumption);
-  }
-  const fabricPortsPerLeaf = oversubResolved.fabricPorts;
-  if (inputs.leaf.hostPorts + fabricPortsPerLeaf > inputs.leaf.totalPorts) {
-    throw new Error('Oversubscription-derived fabric ports exceed leaf total port count.');
-  }
+  const fabricPerLeaf = fabricPortsPerLeaf(inputs.switchRadix);
+  const totalLeafFabricConnections = totalLeaves * fabricPerLeaf;
+  metadata.totalLeafToSpineLinks = totalLeafFabricConnections;
 
-  const totalLeafFabricConnections = totalLeaves * fabricPortsPerLeaf;
-  const leafToSpinePerPod = leavesPerPod * fabricPortsPerLeaf;
-
-  const spinesRequired = Math.ceil(totalLeafFabricConnections / inputs.spine.downlinkPorts);
-  if (!Number.isFinite(spinesRequired) || spinesRequired <= 0) {
-    throw new Error('Invalid spine configuration, unable to service leaf uplinks.');
-  }
-  assumptions.push({
-    label: 'Spines required',
-    description: `ceil(${totalLeafFabricConnections} / ${inputs.spine.downlinkPorts}) = ${spinesRequired} spine switches.`,
-  });
-
-  const hostToLeafPerPod = inputs.hostsPerPod * inputs.nicsPerHost;
-  const hostToLeafTotal = inputs.totalHosts * inputs.nicsPerHost;
+  const spinesRequired = Math.max(1, Math.ceil(totalLeafFabricConnections / inputs.switchRadix));
+  pushAssumption(
+    assumptions,
+    'Spines required',
+    `ceil(${totalLeafFabricConnections} / ${inputs.switchRadix}) = ${spinesRequired} spine switches.`,
+  );
 
   result.switchCounts = {
     leaves: totalLeaves,
@@ -111,169 +98,126 @@ export function calculateClos3(inputs) {
     total: totalLeaves + spinesRequired,
   };
 
-  result.fiberCounts = {
-    hostToLeafPerPod,
-    hostToLeafTotal,
-    leafToSpinePerPod,
-    leafToSpineTotal: totalLeafFabricConnections,
-  };
-
-  metadata.totalLeaves = totalLeaves;
-  metadata.totalLeafToSpineLinks = totalLeafFabricConnections;
-
   result.metadata = metadata;
   return result;
 }
 
 export function calculateClos5(inputs) {
-  if (!inputs.superSpine) {
-    throw new Error('5-stage Clos sizing requires a super-spine definition.');
-  }
-  if (!inputs.spine.uplinkPorts) {
-    throw new Error('Spine uplink port count is required for 5-stage Clos calculations.');
-  }
+  ensureEvenRadix(inputs.switchRadix);
 
-  validateLeafConfig(inputs.leaf);
   const result = makeResultSkeleton();
-  const metadata = buildBaseMetadata(inputs);
   const assumptions = result.assumptions;
+  const metadata = baseMetadata(inputs);
 
-  const podCount = derivePodCount(inputs.totalHosts, inputs.hostsPerPod);
+  const hostsPerLeafValue = hostsPerLeaf(inputs.switchRadix);
+  metadata.hostsPerLeaf = hostsPerLeafValue;
+  pushAssumption(
+    assumptions,
+    'Hosts per leaf',
+    `${inputs.switchRadix} total ports, half allocated to hosts = ${hostsPerLeafValue} hosts per leaf.`,
+  );
+
+  const normalizedHostsPerPod = metadata.hostsPerPod;
+  const podCount = derivePodCount(inputs.totalHosts, normalizedHostsPerPod);
   metadata.pods = podCount;
-  assumptions.push({
-    label: 'Pods required',
-    description: `ceil(${inputs.totalHosts} / ${inputs.hostsPerPod}) = ${podCount} pods.`,
-  });
+  pushAssumption(
+    assumptions,
+    'Pods required',
+    `ceil(${inputs.totalHosts} / ${normalizedHostsPerPod}) = ${podCount} pods.`,
+  );
 
-  const perLeafHostCapacity = hostCapacityPerLeaf(inputs.leaf, inputs.nicsPerHost);
-  if (perLeafHostCapacity <= 0) {
-    throw new Error('Leaf host port allocation does not allow any hosts per leaf.');
-  }
-  metadata.hostsPerLeaf = perLeafHostCapacity;
-  assumptions.push({
-    label: 'Hosts per leaf',
-    description: `floor(${inputs.leaf.hostPorts} / ${inputs.nicsPerHost}) = ${perLeafHostCapacity} hosts per leaf.`,
-  });
-
-  const leavesPerPod = Math.ceil(inputs.hostsPerPod / perLeafHostCapacity);
+  const leavesPerPod = Math.max(1, Math.ceil(normalizedHostsPerPod / hostsPerLeafValue));
   metadata.leavesPerPod = leavesPerPod;
-  assumptions.push({
-    label: 'Leaves per pod',
-    description: `ceil(${inputs.hostsPerPod} / ${perLeafHostCapacity}) = ${leavesPerPod} leaves per pod.`,
-  });
+  pushAssumption(
+    assumptions,
+    'Leaves per pod',
+    `ceil(${normalizedHostsPerPod} / ${hostsPerLeafValue}) = ${leavesPerPod} leaves per pod.`,
+  );
 
   const totalLeaves = leavesPerPod * podCount;
+  metadata.totalLeaves = totalLeaves;
 
-  const oversubResolved = resolveFabricPorts(inputs.leaf, inputs.oversubscription);
-  if (oversubResolved.assumption) {
-    assumptions.push(oversubResolved.assumption);
-  }
-  const fabricPortsPerLeaf = oversubResolved.fabricPorts;
-  if (inputs.leaf.hostPorts + fabricPortsPerLeaf > inputs.leaf.totalPorts) {
-    throw new Error('Oversubscription-derived fabric ports exceed leaf total port count.');
-  }
+  const leafFabricPerPod = leavesPerPod * fabricPortsPerLeaf(inputs.switchRadix);
+  const downCapacityPerSpine = hostsPerLeaf(inputs.switchRadix);
+  const spinesPerPod = Math.max(1, Math.ceil(leafFabricPerPod / downCapacityPerSpine));
+  metadata.spinesPerPod = spinesPerPod;
+  pushAssumption(
+    assumptions,
+    'Spines per pod',
+    `ceil(${leafFabricPerPod} / ${downCapacityPerSpine}) = ${spinesPerPod} spine switches per pod.`,
+  );
 
-  const leafToSpinePerPod = leavesPerPod * fabricPortsPerLeaf;
-  const totalLeafFabricConnections = leafToSpinePerPod * podCount;
-
-  const spinesPerPod = Math.ceil(leafToSpinePerPod / inputs.spine.downlinkPorts);
-  assumptions.push({
-    label: 'Spines per pod',
-    description: `ceil(${leafToSpinePerPod} / ${inputs.spine.downlinkPorts}) = ${spinesPerPod} spine switches per pod.`,
-  });
   const totalSpines = spinesPerPod * podCount;
+  metadata.totalSpines = totalSpines;
 
-  const spineToSuperPerPod = spinesPerPod * inputs.spine.uplinkPorts;
-  const totalSpineToSuper = spineToSuperPerPod * podCount;
-
-  const superSpinesRequired = Math.ceil(totalSpineToSuper / inputs.superSpine.downlinkPorts);
-  assumptions.push({
-    label: 'Super-spines required',
-    description: `ceil(${totalSpineToSuper} / ${inputs.superSpine.downlinkPorts}) = ${superSpinesRequired} super-spine switches.`,
-  });
-
-  const hostToLeafPerPod = inputs.hostsPerPod * inputs.nicsPerHost;
-  const hostToLeafTotal = inputs.totalHosts * inputs.nicsPerHost;
+  const uplinksPerSpine = fabricPortsPerLeaf(inputs.switchRadix);
+  const totalSpineUplinks = totalSpines * uplinksPerSpine;
+  metadata.totalSpineToSuperLinks = totalSpineUplinks;
+  const superSpines = Math.max(1, Math.ceil(totalSpineUplinks / inputs.switchRadix));
+  pushAssumption(
+    assumptions,
+    'Super-spines required',
+    `ceil(${totalSpineUplinks} / ${inputs.switchRadix}) = ${superSpines} super-spine switches.`,
+  );
 
   result.switchCounts = {
     leaves: totalLeaves,
     spines: totalSpines,
-    superSpines: superSpinesRequired,
-    total: totalLeaves + totalSpines + superSpinesRequired,
+    superSpines,
+    total: totalLeaves + totalSpines + superSpines,
   };
-
-  result.fiberCounts = {
-    hostToLeafPerPod,
-    hostToLeafTotal,
-    leafToSpinePerPod,
-    leafToSpineTotal: totalLeafFabricConnections,
-    spineToSuperPerPod,
-    spineToSuperTotal: totalSpineToSuper,
-  };
-
-  metadata.totalLeaves = totalLeaves;
-  metadata.spinesPerPod = spinesPerPod;
-  metadata.totalSpines = totalSpines;
-  metadata.totalLeafToSpineLinks = totalLeafFabricConnections;
-  metadata.totalSpineToSuperLinks = totalSpineToSuper;
 
   result.metadata = metadata;
   return result;
 }
 
 export function calculateDragonflyPlus(inputs) {
-  if (!inputs.dragonflyPlus) {
-    throw new Error('Dragonfly+ sizing requires dragonflyPlus configuration values.');
-  }
+  ensureEvenRadix(inputs.switchRadix);
 
-  validateLeafConfig(inputs.leaf);
-  const cfg = inputs.dragonflyPlus;
   const result = makeResultSkeleton();
-  const metadata = buildBaseMetadata(inputs);
   const assumptions = result.assumptions;
+  const metadata = baseMetadata(inputs);
 
-  const perLeafHostCapacity = hostCapacityPerLeaf(inputs.leaf, inputs.nicsPerHost);
-  if (perLeafHostCapacity <= 0) {
-    throw new Error('Leaf host port allocation does not allow any hosts per leaf.');
-  }
-  metadata.hostsPerLeaf = perLeafHostCapacity;
-  assumptions.push({
-    label: 'Hosts per leaf',
-    description: `floor(${inputs.leaf.hostPorts} / ${inputs.nicsPerHost}) = ${perLeafHostCapacity} hosts per leaf.`,
-  });
+  const hostsPerLeafValue = hostsPerLeaf(inputs.switchRadix);
+  metadata.hostsPerLeaf = hostsPerLeafValue;
+  pushAssumption(
+    assumptions,
+    'Hosts per leaf',
+    `${inputs.switchRadix} total ports, half allocated to hosts = ${hostsPerLeafValue} hosts per leaf.`,
+  );
 
-  const hostsPerGroupCapacity = perLeafHostCapacity * cfg.leavesPerGroup;
-  const groupsRequired = Math.max(1, Math.ceil(inputs.totalHosts / hostsPerGroupCapacity));
-  metadata.groups = groupsRequired;
-  assumptions.push({
-    label: 'Groups required',
-    description: `ceil(${inputs.totalHosts} / ${hostsPerGroupCapacity}) = ${groupsRequired} groups.`,
-  });
+  const normalizedHostsPerGroup = metadata.hostsPerPod;
+  const groups = derivePodCount(inputs.totalHosts, normalizedHostsPerGroup);
+  metadata.groups = groups;
+  pushAssumption(
+    assumptions,
+    'Groups required',
+    `ceil(${inputs.totalHosts} / ${normalizedHostsPerGroup}) = ${groups} groups.`,
+  );
 
-  const oversubResolved = resolveFabricPorts(inputs.leaf, inputs.oversubscription);
-  if (oversubResolved.assumption) {
-    assumptions.push(oversubResolved.assumption);
-  }
-  const fabricPortsPerLeaf = oversubResolved.fabricPorts;
-  if (fabricPortsPerLeaf < cfg.intraGroupDegree) {
-    throw new Error('Intra-group degree exceeds available fabric ports per leaf.');
-  }
+  const leavesPerGroup = Math.max(1, Math.ceil(normalizedHostsPerGroup / hostsPerLeafValue));
+  metadata.leavesPerGroup = leavesPerGroup;
+  pushAssumption(
+    assumptions,
+    'Leaves per group',
+    `ceil(${normalizedHostsPerGroup} / ${hostsPerLeafValue}) = ${leavesPerGroup} leaves per group.`,
+  );
 
-  const totalLeaves = cfg.leavesPerGroup * groupsRequired;
-  const totalSpines = cfg.spinesPerGroup * groupsRequired;
+  const fabricPerLeaf = fabricPortsPerLeaf(inputs.switchRadix);
+  const spineDownCapacity = hostsPerLeaf(inputs.switchRadix);
+  const leafToSpineWithinGroup = leavesPerGroup * fabricPerLeaf;
+  const spinesPerGroup = Math.max(1, Math.ceil(leafToSpineWithinGroup / spineDownCapacity));
+  metadata.spinesPerGroup = spinesPerGroup;
+  pushAssumption(
+    assumptions,
+    'Spines per group',
+    `ceil(${leafToSpineWithinGroup} / ${spineDownCapacity}) = ${spinesPerGroup} spines per group.`,
+  );
 
-  const hostToLeafPerGroup = Math.min(inputs.hostsPerPod, hostsPerGroupCapacity) * inputs.nicsPerHost;
-  const hostToLeafTotal = inputs.totalHosts * inputs.nicsPerHost;
-
-  const leafToSpinePerGroup = cfg.leavesPerGroup * cfg.intraGroupDegree;
-  const leafToSpineTotal = leafToSpinePerGroup * groupsRequired;
-
-  const interGroupLinksRaw = groupsRequired * cfg.spinesPerGroup * cfg.interGroupDegree;
-  const interGroupUnique = Math.ceil(interGroupLinksRaw / 2);
-  assumptions.push({
-    label: 'Inter-group links deduplicated',
-    description: `Each of ${groupsRequired} groups contributes ${cfg.spinesPerGroup} spines with ${cfg.interGroupDegree} links; total ${interGroupLinksRaw} endpoints, divided by 2 and rounded up = ${interGroupUnique} unique links.`,
-  });
+  const totalLeaves = leavesPerGroup * groups;
+  const totalSpines = spinesPerGroup * groups;
+  metadata.totalLeaves = totalLeaves;
+  metadata.totalSpines = totalSpines;
 
   result.switchCounts = {
     leaves: totalLeaves,
@@ -281,24 +225,48 @@ export function calculateDragonflyPlus(inputs) {
     total: totalLeaves + totalSpines,
   };
 
-  result.fiberCounts = {
-    hostToLeafPerPod: hostToLeafPerGroup,
-    hostToLeafTotal,
-    leafToSpinePerPod: leafToSpinePerGroup,
-    leafToSpineTotal,
-    interGroupPerGroup: cfg.spinesPerGroup * cfg.interGroupDegree,
-    interGroupTotal: interGroupUnique,
-  };
-
-  metadata.leavesPerGroup = cfg.leavesPerGroup;
-  metadata.spinesPerGroup = cfg.spinesPerGroup;
-  metadata.totalLeaves = totalLeaves;
-  metadata.totalSpines = totalSpines;
-  metadata.totalLeafToSpineLinks = leafToSpineTotal;
-  metadata.totalInterGroupLinks = interGroupUnique;
-
   result.metadata = metadata;
   return result;
+}
+
+export function calculateMultiPlane(inputs) {
+  const perPlane = calculateClos3(inputs);
+  const planeCount = DEFAULT_PLANE_COUNT;
+
+  const leavesPerPlane = perPlane.switchCounts.leaves;
+  const spinesPerPlane = perPlane.switchCounts.spines;
+
+  const switchCounts = {
+    leaves: leavesPerPlane * planeCount,
+    spines: spinesPerPlane * planeCount,
+    total: perPlane.switchCounts.total * planeCount,
+  };
+
+  const metadata = {
+    ...perPlane.metadata,
+    planeCount,
+    leavesPerPlane,
+    spinesPerPlane,
+  };
+
+  if (typeof perPlane.metadata.totalLeaves === 'number') {
+    metadata.totalLeaves = perPlane.metadata.totalLeaves * planeCount;
+  }
+  if (typeof perPlane.metadata.totalLeafToSpineLinks === 'number') {
+    metadata.totalLeafToSpineLinks = perPlane.metadata.totalLeafToSpineLinks * planeCount;
+  }
+
+  const assumptions = perPlane.assumptions.slice();
+  assumptions.push({
+    label: 'Planes',
+    description: `Multi-plane fabric duplicates the Clos fabric across ${planeCount} planes.`,
+  });
+
+  return {
+    switchCounts,
+    assumptions,
+    metadata,
+  };
 }
 
 export function calculateSizing(inputs) {
@@ -309,6 +277,8 @@ export function calculateSizing(inputs) {
       return calculateClos5(inputs);
     case 'dragonflyPlus':
       return calculateDragonflyPlus(inputs);
+    case 'multiPlane':
+      return calculateMultiPlane(inputs);
     default:
       throw new Error(`Unsupported topology: ${inputs.topology}`);
   }

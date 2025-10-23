@@ -1,185 +1,74 @@
 import { calculateSizing } from './calculators.js';
-import { z } from './zod-lite.js';
 
-const STORAGE_KEY = 'fabric-sizer-inputs-v1';
+const STORAGE_KEY = 'fabric-sizer-inputs-v2';
+
+const TOTAL_HOST_OPTIONS = [16, 32, 128, 256, 512, 1024, 32768, 131072];
+const HOSTS_PER_POD_OPTIONS = [0, 8, 16, 32, 64, 128, 256];
+const SWITCH_RADIX_OPTIONS = [32, 64, 128];
+
+const METADATA_LABELS = {
+  pods: 'Pods required',
+  leavesPerPod: 'Leaves per pod',
+  hostsPerLeaf: 'Hosts per leaf',
+  spinesPerPod: 'Spines per pod',
+  groups: 'Groups required',
+  leavesPerGroup: 'Leaves per group',
+  spinesPerGroup: 'Spines per group',
+  planeCount: 'Planes',
+  leavesPerPlane: 'Leaves per plane',
+  spinesPerPlane: 'Spines per plane',
+  totalLeaves: 'Total leaves',
+  totalSpines: 'Total spines',
+};
 
 const defaultState = {
-  preset: 'custom',
   totalHosts: 1024,
   hostsPerPod: 256,
+  switchRadix: 32,
   topology: 'clos3',
-  nicsPerHost: 1,
-  oversubscription: null,
-  leaf: { totalPorts: 32, hostPorts: 24, fabricPorts: 8 },
-  spine: { totalPorts: 32, downlinkPorts: 32, uplinkPorts: 16 },
-  superSpine: { totalPorts: 64, downlinkPorts: 64 },
-  dragonflyPlus: { leavesPerGroup: 4, spinesPerGroup: 4, intraGroupDegree: 4, interGroupDegree: 2 },
 };
-
-const PRESETS = {
-  'leaf32-400': {
-    leaf: { totalPorts: 32, hostPorts: 24, fabricPorts: 8 },
-    spine: { totalPorts: 32, downlinkPorts: 24, uplinkPorts: 8 },
-    superSpine: { totalPorts: 64, downlinkPorts: 64 },
-  },
-  'leaf64-400': {
-    leaf: { totalPorts: 64, hostPorts: 48, fabricPorts: 16 },
-    spine: { totalPorts: 64, downlinkPorts: 48, uplinkPorts: 16 },
-    superSpine: { totalPorts: 128, downlinkPorts: 128 },
-  },
-  'leaf32-800': {
-    leaf: { totalPorts: 32, hostPorts: 24, fabricPorts: 8 },
-    spine: { totalPorts: 48, downlinkPorts: 24, uplinkPorts: 12 },
-    superSpine: { totalPorts: 96, downlinkPorts: 96 },
-  },
-};
-
-const inputSchema = z.object({
-  totalHosts: z.number().int().positive().max(500000),
-  hostsPerPod: z.number().int().positive().max(200000),
-  topology: z.enum(['clos3', 'clos5', 'dragonflyPlus']),
-  nicsPerHost: z.number().int().positive().max(2),
-  oversubscription: z.optional(z.enum(['1:1', '2:1', '3:1'])),
-  leaf: z.object({
-    totalPorts: z.number().int().positive().max(1024),
-    hostPorts: z.number().int().positive().max(1024),
-    fabricPorts: z.number().int().nonnegative().max(1024),
-  }),
-  spine: z.object({
-    totalPorts: z.number().int().positive().max(1024),
-    downlinkPorts: z.number().int().positive().max(1024),
-    uplinkPorts: z.optional(z.number().int().nonnegative().max(1024)),
-  }),
-  superSpine: z.optional(
-    z.object({
-      totalPorts: z.number().int().positive().max(2048),
-      downlinkPorts: z.number().int().positive().max(2048),
-    }),
-  ),
-  dragonflyPlus: z.optional(
-    z.object({
-      leavesPerGroup: z.number().int().positive().max(512),
-      spinesPerGroup: z.number().int().positive().max(512),
-      intraGroupDegree: z.number().int().nonnegative().max(512),
-      interGroupDegree: z.number().int().nonnegative().max(512),
-    }),
-  ),
-});
 
 let state = loadInitialState();
 let latestResult = null;
 let isSyncing = false;
 
 const elements = {
-  presetSelect: document.getElementById('presetSelect'),
   totalHosts: document.getElementById('totalHosts'),
   hostsPerPod: document.getElementById('hostsPerPod'),
+  switchRadix: document.getElementById('switchRadix'),
   topologyRadios: Array.from(document.querySelectorAll('input[name="topology"]')),
-  nicsPerHost: document.getElementById('nicsPerHost'),
-  leafTotalPorts: document.getElementById('leafTotalPorts'),
-  leafHostPorts: document.getElementById('leafHostPorts'),
-  leafFabricPorts: document.getElementById('leafFabricPorts'),
-  spineTotalPorts: document.getElementById('spineTotalPorts'),
-  spineDownlinks: document.getElementById('spineDownlinks'),
-  spineUplinks: document.getElementById('spineUplinks'),
-  superSpineTotal: document.getElementById('superSpineTotal'),
-  superSpineDown: document.getElementById('superSpineDown'),
-  dfLeavesPerGroup: document.getElementById('dfLeavesPerGroup'),
-  dfSpinesPerGroup: document.getElementById('dfSpinesPerGroup'),
-  dfIntraDegree: document.getElementById('dfIntraDegree'),
-  dfInterDegree: document.getElementById('dfInterDegree'),
-  oversubscription: document.getElementById('oversubscription'),
   validationMessage: document.getElementById('validationMessage'),
   copyButton: document.getElementById('copyButton'),
-  resultsRoot: document.getElementById('resultsRoot'),
   leavesCount: document.getElementById('leavesCount'),
   spinesCount: document.getElementById('spinesCount'),
   superSpinesCount: document.getElementById('superSpinesCount'),
   totalSwitches: document.getElementById('totalSwitches'),
-  hostLeafPerPod: document.getElementById('hostLeafPerPod'),
-  hostLeafTotal: document.getElementById('hostLeafTotal'),
-  leafSpinePerPod: document.getElementById('leafSpinePerPod'),
-  leafSpineTotal: document.getElementById('leafSpineTotal'),
-  spineSuperPerPod: document.getElementById('spineSuperPerPod'),
-  spineSuperTotal: document.getElementById('spineSuperTotal'),
-  interGroupPer: document.getElementById('interGroupPer'),
-  interGroupTotal: document.getElementById('interGroupTotal'),
   podDetails: document.getElementById('podDetails'),
   assumptionsList: document.getElementById('assumptionsList'),
-  superSection: document.querySelector('[data-role="superSpine"]'),
-  dragonflySection: document.querySelector('[data-role="dragonfly"]'),
-  spineUplinkGroup: document.querySelector('[data-role="spineUplinks"]'),
-  resultSuper: document.querySelectorAll('[data-role="resultSuper"]'),
-  fiberSuper: document.querySelectorAll('[data-role="fiberSuper"]'),
-  fiberInter: document.querySelectorAll('[data-role="fiberInter"]'),
+  resultSuper: document.querySelector('[data-role="resultSuper"]'),
 };
 
-const bindings = [
-  { element: elements.totalHosts, path: 'totalHosts', type: 'number' },
-  { element: elements.hostsPerPod, path: 'hostsPerPod', type: 'number' },
-  { element: elements.nicsPerHost, path: 'nicsPerHost', type: 'number' },
-  { element: elements.leafTotalPorts, path: 'leaf.totalPorts', type: 'number' },
-  { element: elements.leafHostPorts, path: 'leaf.hostPorts', type: 'number' },
-  { element: elements.leafFabricPorts, path: 'leaf.fabricPorts', type: 'number' },
-  { element: elements.spineTotalPorts, path: 'spine.totalPorts', type: 'number' },
-  { element: elements.spineDownlinks, path: 'spine.downlinkPorts', type: 'number' },
-  { element: elements.spineUplinks, path: 'spine.uplinkPorts', type: 'number' },
-  { element: elements.superSpineTotal, path: 'superSpine.totalPorts', type: 'number' },
-  { element: elements.superSpineDown, path: 'superSpine.downlinkPorts', type: 'number' },
-  { element: elements.dfLeavesPerGroup, path: 'dragonflyPlus.leavesPerGroup', type: 'number' },
-  { element: elements.dfSpinesPerGroup, path: 'dragonflyPlus.spinesPerGroup', type: 'number' },
-  { element: elements.dfIntraDegree, path: 'dragonflyPlus.intraGroupDegree', type: 'number' },
-  { element: elements.dfInterDegree, path: 'dragonflyPlus.interGroupDegree', type: 'number' },
-];
+function populateSelect(select, options, formatter) {
+  select.innerHTML = '';
+  options.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = String(value);
+    option.textContent = formatter ? formatter(value) : value.toLocaleString('en-US');
+    select.appendChild(option);
+  });
+}
 
 function loadInitialState() {
-  const clone = JSON.parse(JSON.stringify(defaultState));
+  const clone = { ...defaultState };
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (!stored) return clone;
     const parsed = JSON.parse(stored);
-    return mergeState(clone, parsed);
+    return { ...clone, ...parsed };
   } catch (error) {
     console.warn('Failed to load stored inputs', error);
     return clone;
   }
-}
-
-function mergeState(base, patch) {
-  const merged = { ...base };
-  for (const key of Object.keys(patch)) {
-    if (patch[key] && typeof patch[key] === 'object' && !Array.isArray(patch[key])) {
-      merged[key] = mergeState(base[key] || {}, patch[key]);
-    } else {
-      merged[key] = patch[key];
-    }
-  }
-  return merged;
-}
-
-function assignValue(obj, path, value) {
-  const keys = path.split('.');
-  let current = obj;
-  for (let i = 0; i < keys.length - 1; i += 1) {
-    const key = keys[i];
-    if (typeof current[key] !== 'object' || current[key] === null) {
-      current[key] = {};
-    }
-    current = current[key];
-  }
-  current[keys[keys.length - 1]] = value;
-}
-
-function updateState(path, value) {
-  if (isSyncing) return;
-  if (state.preset !== 'custom') {
-    state.preset = 'custom';
-    elements.presetSelect.value = 'custom';
-  }
-  assignValue(state, path, value);
-  persistState();
-  applyOversubscriptionLock();
-  recalculate();
 }
 
 function persistState() {
@@ -190,90 +79,57 @@ function persistState() {
   }
 }
 
-function applyOversubscriptionLock() {
-  const setting = state.oversubscription;
-  const fabricField = elements.leafFabricPorts;
-  if (setting && setting !== 'none') {
-    const ratio = Number(setting.split(':')[0]);
-    if (Number.isFinite(ratio) && ratio > 0) {
-      const computed = Math.ceil(state.leaf.hostPorts / ratio) || 0;
-      state.leaf.fabricPorts = computed;
-      fabricField.value = computed;
-    }
-    fabricField.setAttribute('readonly', 'readonly');
-  } else {
-    fabricField.removeAttribute('readonly');
-  }
+function updateState(key, value) {
+  if (isSyncing) return;
+  state = { ...state, [key]: value };
+  persistState();
+  recalculate();
 }
 
 function applyStateToInputs() {
   isSyncing = true;
-  elements.presetSelect.value = state.preset || 'custom';
-  elements.totalHosts.value = state.totalHosts;
-  elements.hostsPerPod.value = state.hostsPerPod;
-  elements.nicsPerHost.value = state.nicsPerHost;
-  elements.leafTotalPorts.value = state.leaf.totalPorts;
-  elements.leafHostPorts.value = state.leaf.hostPorts;
-  elements.leafFabricPorts.value = state.leaf.fabricPorts;
-  elements.spineTotalPorts.value = state.spine.totalPorts;
-  elements.spineDownlinks.value = state.spine.downlinkPorts;
-  elements.spineUplinks.value = state.spine.uplinkPorts ?? 0;
-  elements.superSpineTotal.value = state.superSpine.totalPorts ?? 0;
-  elements.superSpineDown.value = state.superSpine.downlinkPorts ?? 0;
-  elements.dfLeavesPerGroup.value = state.dragonflyPlus.leavesPerGroup;
-  elements.dfSpinesPerGroup.value = state.dragonflyPlus.spinesPerGroup;
-  elements.dfIntraDegree.value = state.dragonflyPlus.intraGroupDegree;
-  elements.dfInterDegree.value = state.dragonflyPlus.interGroupDegree;
-  elements.oversubscription.value = state.oversubscription || 'none';
+  elements.totalHosts.value = String(state.totalHosts);
+  elements.hostsPerPod.value = String(state.hostsPerPod);
+  elements.switchRadix.value = String(state.switchRadix);
   elements.topologyRadios.forEach((radio) => {
     radio.checked = radio.value === state.topology;
   });
   isSyncing = false;
-  applyOversubscriptionLock();
-  toggleSections();
+  toggleSuperVisibility();
 }
 
-function toggleSections() {
-  const isClos5 = state.topology === 'clos5';
-  const isDragonfly = state.topology === 'dragonflyPlus';
-  elements.superSection.style.display = isClos5 ? 'block' : 'none';
-  elements.dragonflySection.style.display = isDragonfly ? 'block' : 'none';
-  elements.spineUplinkGroup.style.display = isClos5 ? 'flex' : 'none';
-  elements.resultSuper.forEach((node) => {
-    node.style.display = isClos5 ? 'block' : 'none';
-  });
-  elements.fiberSuper.forEach((node) => {
-    node.style.display = isClos5 ? 'block' : 'none';
-  });
-  elements.fiberInter.forEach((node) => {
-    node.style.display = isDragonfly ? 'block' : 'none';
-  });
+function toggleSuperVisibility() {
+  if (!elements.resultSuper) return;
+  const show = state.topology === 'clos5';
+  elements.resultSuper.style.display = show ? 'block' : 'none';
 }
 
 function buildPayload() {
-  const payload = {
+  return {
     totalHosts: state.totalHosts,
     hostsPerPod: state.hostsPerPod,
+    switchRadix: state.switchRadix,
     topology: state.topology,
-    nicsPerHost: state.nicsPerHost,
-    oversubscription: state.oversubscription && state.oversubscription !== 'none' ? state.oversubscription : undefined,
-    leaf: { ...state.leaf },
-    spine: { ...state.spine },
   };
-  if (state.topology === 'clos5') {
-    payload.superSpine = { ...state.superSpine };
+}
+
+function validateState() {
+  if (!TOTAL_HOST_OPTIONS.includes(state.totalHosts)) {
+    throw new Error('Select a supported total host count.');
   }
-  if (state.topology === 'dragonflyPlus') {
-    payload.dragonflyPlus = { ...state.dragonflyPlus };
+  if (!HOSTS_PER_POD_OPTIONS.includes(state.hostsPerPod)) {
+    throw new Error('Select a supported hosts per pod value.');
   }
-  return payload;
+  if (!SWITCH_RADIX_OPTIONS.includes(state.switchRadix)) {
+    throw new Error('Select a supported switch radix.');
+  }
 }
 
 function recalculate() {
-  const payload = buildPayload();
-  const validation = inputSchema.safeParse(payload);
-  if (!validation.success) {
-    showValidationMessage(validation.error);
+  try {
+    validateState();
+  } catch (error) {
+    showValidationMessage(error.message);
     clearResults();
     latestResult = null;
     elements.copyButton.disabled = true;
@@ -282,9 +138,9 @@ function recalculate() {
 
   let result;
   try {
-    result = calculateSizing(validation.data);
+    result = calculateSizing(buildPayload());
   } catch (error) {
-    showRuntimeError(error);
+    showValidationMessage(error.message || 'Unable to compute sizing for the provided inputs.');
     clearResults();
     latestResult = null;
     elements.copyButton.disabled = true;
@@ -298,36 +154,19 @@ function recalculate() {
   persistState();
 }
 
-function showValidationMessage(error) {
-  const issue = error.issues?.[0];
-  const message = issue?.message || 'Invalid input configuration. Please review your values.';
+function showValidationMessage(message) {
   elements.validationMessage.textContent = message;
   elements.validationMessage.classList.remove('hidden');
 }
 
-function showRuntimeError(error) {
-  elements.validationMessage.textContent = error.message || 'Unable to compute sizing for the provided inputs.';
-  elements.validationMessage.classList.remove('hidden');
-}
-
 function clearResults() {
-  const fields = [
-    elements.leavesCount,
-    elements.spinesCount,
-    elements.superSpinesCount,
-    elements.totalSwitches,
-    elements.hostLeafPerPod,
-    elements.hostLeafTotal,
-    elements.leafSpinePerPod,
-    elements.leafSpineTotal,
-    elements.spineSuperPerPod,
-    elements.spineSuperTotal,
-    elements.interGroupPer,
-    elements.interGroupTotal,
-  ];
+  const fields = [elements.leavesCount, elements.spinesCount, elements.superSpinesCount, elements.totalSwitches];
   fields.forEach((field) => {
     if (field) field.textContent = '-';
   });
+  if (elements.resultSuper) {
+    elements.resultSuper.style.display = state.topology === 'clos5' ? 'block' : 'none';
+  }
   elements.podDetails.innerHTML = '';
   elements.assumptionsList.innerHTML = '';
 }
@@ -335,41 +174,36 @@ function clearResults() {
 function updateResults(result) {
   elements.leavesCount.textContent = formatNumber(result.switchCounts.leaves);
   elements.spinesCount.textContent = formatNumber(result.switchCounts.spines);
-  elements.superSpinesCount.textContent = result.switchCounts.superSpines ? formatNumber(result.switchCounts.superSpines) : '-';
+  if (result.switchCounts.superSpines !== undefined) {
+    elements.superSpinesCount.textContent = formatNumber(result.switchCounts.superSpines);
+    if (elements.resultSuper) {
+      elements.resultSuper.style.display = 'block';
+    }
+  } else if (elements.resultSuper) {
+    elements.resultSuper.style.display = 'none';
+  }
   elements.totalSwitches.textContent = formatNumber(result.switchCounts.total);
 
-  elements.hostLeafPerPod.textContent = formatNumber(result.fiberCounts.hostToLeafPerPod);
-  elements.hostLeafTotal.textContent = formatNumber(result.fiberCounts.hostToLeafTotal);
-  elements.leafSpinePerPod.textContent = formatNumber(result.fiberCounts.leafToSpinePerPod);
-  elements.leafSpineTotal.textContent = formatNumber(result.fiberCounts.leafToSpineTotal);
-  elements.spineSuperPerPod.textContent = result.fiberCounts.spineToSuperPerPod !== undefined ? formatNumber(result.fiberCounts.spineToSuperPerPod) : '-';
-  elements.spineSuperTotal.textContent = result.fiberCounts.spineToSuperTotal !== undefined ? formatNumber(result.fiberCounts.spineToSuperTotal) : '-';
-  elements.interGroupPer.textContent = result.fiberCounts.interGroupPerGroup !== undefined ? formatNumber(result.fiberCounts.interGroupPerGroup) : '-';
-  elements.interGroupTotal.textContent = result.fiberCounts.interGroupTotal !== undefined ? formatNumber(result.fiberCounts.interGroupTotal) : '-';
-
-  renderPodDetails(result);
-  renderAssumptions(result);
+  renderBreakdown(result.metadata || {});
+  renderAssumptions(result.assumptions || []);
 }
 
-function renderPodDetails(result) {
-  const items = [];
-  const meta = result.metadata || {};
-  if (meta.pods !== undefined) items.push(`Pods required: ${formatNumber(meta.pods)}`);
-  if (meta.leavesPerPod !== undefined) items.push(`Leaves per pod: ${formatNumber(meta.leavesPerPod)}`);
-  if (meta.hostsPerLeaf !== undefined) items.push(`Hosts per leaf: ${formatNumber(meta.hostsPerLeaf)}`);
-  if (meta.spinesPerPod !== undefined) items.push(`Spines per pod: ${formatNumber(meta.spinesPerPod)}`);
-  if (meta.groups !== undefined) items.push(`Groups required: ${formatNumber(meta.groups)}`);
-  if (meta.leavesPerGroup !== undefined) items.push(`Leaves per group: ${formatNumber(meta.leavesPerGroup)}`);
-  if (meta.spinesPerGroup !== undefined) items.push(`Spines per group: ${formatNumber(meta.spinesPerGroup)}`);
-  elements.podDetails.innerHTML = items.map((line) => `<p>${line}</p>`).join('');
+function renderBreakdown(metadata) {
+  const lines = [];
+  Object.entries(METADATA_LABELS).forEach(([key, label]) => {
+    if (metadata[key] !== undefined) {
+      lines.push(`<p>${label}: ${formatNumber(metadata[key])}</p>`);
+    }
+  });
+  elements.podDetails.innerHTML = lines.join('');
 }
 
-function renderAssumptions(result) {
-  if (!Array.isArray(result.assumptions)) {
+function renderAssumptions(assumptions) {
+  if (!Array.isArray(assumptions) || assumptions.length === 0) {
     elements.assumptionsList.innerHTML = '';
     return;
   }
-  elements.assumptionsList.innerHTML = result.assumptions
+  elements.assumptionsList.innerHTML = assumptions
     .map((entry) => `<li><strong>${entry.label}:</strong> ${entry.description}</li>`)
     .join('');
 }
@@ -380,61 +214,24 @@ function formatNumber(value) {
 }
 
 function attachEventListeners() {
-  bindings.forEach(({ element, path, type }) => {
-    element.addEventListener('input', (event) => {
-      if (isSyncing) return;
-      const raw = event.target.value;
-      if (raw === '') return;
-      if (type === 'number') {
-        const parsed = Number(raw);
-        if (Number.isFinite(parsed)) {
-          updateState(path, parsed);
-        }
-      }
-    });
+  elements.totalHosts.addEventListener('change', (event) => {
+    updateState('totalHosts', Number(event.target.value));
   });
-
+  elements.hostsPerPod.addEventListener('change', (event) => {
+    updateState('hostsPerPod', Number(event.target.value));
+  });
+  elements.switchRadix.addEventListener('change', (event) => {
+    updateState('switchRadix', Number(event.target.value));
+  });
   elements.topologyRadios.forEach((radio) => {
     radio.addEventListener('change', () => {
       if (!radio.checked) return;
-      state.topology = radio.value;
-      state.preset = 'custom';
-      elements.presetSelect.value = 'custom';
-      toggleSections();
+      state = { ...state, topology: radio.value };
+      toggleSuperVisibility();
       persistState();
       recalculate();
     });
   });
-
-  elements.presetSelect.addEventListener('change', (event) => {
-    const value = event.target.value;
-    state.preset = value;
-    if (PRESETS[value]) {
-      const preset = PRESETS[value];
-      state.leaf = { ...state.leaf, ...preset.leaf };
-      state.spine = { ...state.spine, ...preset.spine };
-      state.superSpine = { ...state.superSpine, ...preset.superSpine };
-      applyStateToInputs();
-      persistState();
-      recalculate();
-    }
-  });
-
-  elements.nicsPerHost.addEventListener('change', (event) => {
-    const value = Number(event.target.value);
-    if (Number.isFinite(value)) {
-      updateState('nicsPerHost', value);
-    }
-  });
-
-  elements.oversubscription.addEventListener('change', (event) => {
-    const value = event.target.value;
-    state.oversubscription = value === 'none' ? null : value;
-    applyOversubscriptionLock();
-    persistState();
-    recalculate();
-  });
-
   elements.copyButton.addEventListener('click', async () => {
     if (!latestResult) return;
     try {
@@ -453,6 +250,14 @@ function attachEventListeners() {
     }
   });
 }
+
+populateSelect(elements.totalHosts, TOTAL_HOST_OPTIONS);
+populateSelect(
+  elements.hostsPerPod,
+  HOSTS_PER_POD_OPTIONS,
+  (value) => (value === 0 ? 'Single pod (all hosts)' : value.toLocaleString('en-US')),
+);
+populateSelect(elements.switchRadix, SWITCH_RADIX_OPTIONS, (value) => `${value}-port`);
 
 applyStateToInputs();
 attachEventListeners();

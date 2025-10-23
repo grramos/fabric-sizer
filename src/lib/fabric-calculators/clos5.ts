@@ -1,105 +1,80 @@
-import type { Inputs, SizingResult } from './types';
 import {
-  buildBaseMetadata,
+  baseMetadata,
   derivePodCount,
-  hostCapacityPerLeaf,
+  ensureEvenRadix,
+  fabricPortsPerLeaf,
+  hostsPerLeaf,
   makeResultSkeleton,
-  resolveFabricPorts,
-  validateLeafConfig,
+  normalizeHostsPerPod,
+  pushAssumption,
 } from './common';
+import type { Inputs, SizingResult } from './types';
 
 export function calculate(inputs: Inputs): SizingResult {
-  if (!inputs.superSpine) {
-    throw new Error('5-stage Clos sizing requires a super-spine definition.');
-  }
-  if (!inputs.spine.uplinkPorts) {
-    throw new Error('Spine uplink port count is required for 5-stage Clos calculations.');
-  }
+  ensureEvenRadix(inputs.switchRadix);
 
-  validateLeafConfig(inputs.leaf);
   const result = makeResultSkeleton();
-  const metadata = buildBaseMetadata(inputs);
   const assumptions = result.assumptions;
+  const metadata = baseMetadata(inputs);
 
-  const podCount = derivePodCount(inputs.totalHosts, inputs.hostsPerPod);
+  const hostsPerLeafValue = hostsPerLeaf(inputs.switchRadix);
+  metadata.hostsPerLeaf = hostsPerLeafValue;
+  pushAssumption(
+    assumptions,
+    'Hosts per leaf',
+    `${inputs.switchRadix} total ports, half allocated to hosts = ${hostsPerLeafValue} hosts per leaf.`,
+  );
+
+  const normalizedHostsPerPod = normalizeHostsPerPod(inputs.totalHosts, inputs.hostsPerPod);
+  const podCount = derivePodCount(inputs.totalHosts, normalizedHostsPerPod);
   metadata.pods = podCount;
-  assumptions.push({
-    label: 'Pods required',
-    description: `ceil(${inputs.totalHosts} / ${inputs.hostsPerPod}) = ${podCount} pods.`,
-  });
+  pushAssumption(
+    assumptions,
+    'Pods required',
+    `ceil(${inputs.totalHosts} / ${normalizedHostsPerPod}) = ${podCount} pods.`,
+  );
 
-  const perLeafHostCapacity = hostCapacityPerLeaf(inputs.leaf, inputs.nicsPerHost);
-  if (perLeafHostCapacity <= 0) {
-    throw new Error('Leaf host port allocation does not allow any hosts per leaf.');
-  }
-  metadata.hostsPerLeaf = perLeafHostCapacity;
-  assumptions.push({
-    label: 'Hosts per leaf',
-    description: `floor(${inputs.leaf.hostPorts} / ${inputs.nicsPerHost}) = ${perLeafHostCapacity} hosts per leaf.`,
-  });
-
-  const leavesPerPod = Math.ceil(inputs.hostsPerPod / perLeafHostCapacity);
+  const leavesPerPod = Math.max(1, Math.ceil(normalizedHostsPerPod / hostsPerLeafValue));
   metadata.leavesPerPod = leavesPerPod;
-  assumptions.push({
-    label: 'Leaves per pod',
-    description: `ceil(${inputs.hostsPerPod} / ${perLeafHostCapacity}) = ${leavesPerPod} leaves per pod.`,
-  });
+  pushAssumption(
+    assumptions,
+    'Leaves per pod',
+    `ceil(${normalizedHostsPerPod} / ${hostsPerLeafValue}) = ${leavesPerPod} leaves per pod.`,
+  );
 
   const totalLeaves = leavesPerPod * podCount;
+  metadata.totalLeaves = totalLeaves;
 
-  const oversubResolved = resolveFabricPorts(inputs.leaf, inputs.oversubscription);
-  if (oversubResolved.assumption) {
-    assumptions.push(oversubResolved.assumption);
-  }
-  const fabricPortsPerLeaf = oversubResolved.fabricPorts;
-  if (inputs.leaf.hostPorts + fabricPortsPerLeaf > inputs.leaf.totalPorts) {
-    throw new Error('Oversubscription-derived fabric ports exceed leaf total port count.');
-  }
+  const leafFabricPerPod = leavesPerPod * fabricPortsPerLeaf(inputs.switchRadix);
+  const downCapacityPerSpine = hostsPerLeaf(inputs.switchRadix);
+  const spinesPerPod = Math.max(1, Math.ceil(leafFabricPerPod / downCapacityPerSpine));
+  metadata.spinesPerPod = spinesPerPod;
+  pushAssumption(
+    assumptions,
+    'Spines per pod',
+    `ceil(${leafFabricPerPod} / ${downCapacityPerSpine}) = ${spinesPerPod} spine switches per pod.`,
+  );
 
-  const leafToSpinePerPod = leavesPerPod * fabricPortsPerLeaf;
-  const totalLeafFabricConnections = leafToSpinePerPod * podCount;
-
-  const spinesPerPod = Math.ceil(leafToSpinePerPod / inputs.spine.downlinkPorts);
-  assumptions.push({
-    label: 'Spines per pod',
-    description: `ceil(${leafToSpinePerPod} / ${inputs.spine.downlinkPorts}) = ${spinesPerPod} spine switches per pod.`,
-  });
   const totalSpines = spinesPerPod * podCount;
+  metadata.totalSpines = totalSpines;
 
-  const spineToSuperPerPod = spinesPerPod * inputs.spine.uplinkPorts;
-  const totalSpineToSuper = spineToSuperPerPod * podCount;
-
-  const superSpinesRequired = Math.ceil(totalSpineToSuper / inputs.superSpine.downlinkPorts);
-  assumptions.push({
-    label: 'Super-spines required',
-    description: `ceil(${totalSpineToSuper} / ${inputs.superSpine.downlinkPorts}) = ${superSpinesRequired} super-spine switches.`,
-  });
-
-  const hostToLeafPerPod = inputs.hostsPerPod * inputs.nicsPerHost;
-  const hostToLeafTotal = inputs.totalHosts * inputs.nicsPerHost;
+  const uplinksPerSpine = fabricPortsPerLeaf(inputs.switchRadix);
+  const totalSpineUplinks = totalSpines * uplinksPerSpine;
+  const superSpines = Math.max(1, Math.ceil(totalSpineUplinks / inputs.switchRadix));
+  metadata.totalSpineToSuperLinks = totalSpineUplinks;
+  pushAssumption(
+    assumptions,
+    'Super-spines required',
+    `ceil(${totalSpineUplinks} / ${inputs.switchRadix}) = ${superSpines} super-spine switches.`,
+  );
 
   result.switchCounts = {
     leaves: totalLeaves,
     spines: totalSpines,
-    superSpines: superSpinesRequired,
-    total: totalLeaves + totalSpines + superSpinesRequired,
+    superSpines,
+    total: totalLeaves + totalSpines + superSpines,
   };
-
-  result.fiberCounts = {
-    hostToLeafPerPod,
-    hostToLeafTotal,
-    leafToSpinePerPod,
-    leafToSpineTotal: totalLeafFabricConnections,
-    spineToSuperPerPod,
-    spineToSuperTotal: totalSpineToSuper,
-  };
-
-  metadata.totalLeaves = totalLeaves;
-  metadata.spinesPerPod = spinesPerPod;
-  metadata.totalSpines = totalSpines;
-  metadata.totalLeafToSpineLinks = totalLeafFabricConnections;
-  metadata.totalSpineToSuperLinks = totalSpineToSuper;
-
   result.metadata = metadata;
+
   return result;
 }
